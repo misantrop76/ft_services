@@ -1,19 +1,14 @@
-FROM alpine:latest
+FROM alpine:3.12
 
-RUN apk update && apk add vim influxdb
+RUN apk -U upgrade \
+; apk add --no-cache \
+openrc \
+; apk add influxdb \
+; apk add telegraf --repository http://dl-3.alpinelinux.org/alpine/edge/community/ --allow-untrusted --no-cache
 
-# creating folder for influxdb data and giving rights
-RUN mkdir -p /var/lib/influxdb
-RUN chown influxdb:influxdb /var/lib/influxdb
-# copying config file for influxdb
-RUN mkdir -p /etc/influxdb
-COPY influxdb.conf /etc/influxdb/influxdb.conf
-RUN chown influxdb:influxdb /etc/influxdb/*
+COPY srcs/start.sh /start.sh
+COPY srcs/telegraf.conf /etc/telegraf/telegraf.conf
 
-# copying script for starting nginx and infinite loop to prevent exit
-COPY script.sh /home/script/script.sh
-# giving rights for execution
-RUN chmod 777 /home/script/script.sh
+RUN chmod 777 /start.sh
 
-# container will start on this script
-ENTRYPOINT /home/script/script.sh
+CMD sh start.sh

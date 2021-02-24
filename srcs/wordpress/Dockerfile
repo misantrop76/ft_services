@@ -1,44 +1,33 @@
-FROM alpine:3.11
+FROM alpine:3.12
 
-# installing php packages and nginx
-RUN apk update && apk add php7-cli
-RUN apk add  vim php7-fpm php7-opcache php7-common php7-iconv php7-json php7-gd \
-    php7-mysqli php7-imap php7-cgi fcgi php7-pdo php7-pdo_mysql php7-soap php7-xmlrpc \
-    php7-posix php7-session php7-mcrypt php7-gettext php7-ldap php7-ctype php7-dom php7-curl \
-    php7-xml php7-mbstring  php7-phar nginx mariadb-client
+RUN apk -U upgrade && \
+apk add --no-cache \
+wget \
+php7 \php7-fpm php7-mysqli php7-mbstring php7-json php7-session php-phar curl nginx openssl openrc \
+; adduser -D -g 'www' www \
+; mkdir /www \
+; chown -R www:www /var/lib/nginx \
+; chown -R www:www /www \
+; rm /etc/nginx/nginx.conf \
+&& openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/ssl/private/selfsigned.key -out /etc/ssl/certs/selfsigned.crt -subj "/C=FR/ST=Lyon/L=Lyon/O=thjacque/OU=42/CN=42.fr" \
+; mkdir -p /usr/share/webapps/ \
+; cd /usr/share/webapps/ \
+; wget http://wordpress.org/latest.tar.gz \
+; tar -xzvf latest.tar.gz && rm latest.tar.gz \
+; apk add telegraf --repository http://dl-3.alpinelinux.org/alpine/edge/community/ --allow-untrusted --no-cache \
+; curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar \
+; chmod +x wp-cli.phar \
+; mv wp-cli.phar /usr/local/bin/wp
 
-# installing wordpress
-RUN mkdir -p /usr/share/webapp/wordpress/
-RUN wget https://wordpress.org/latest.tar.gz
-RUN tar xzf latest.tar.gz --strip-components=1 -C /usr/share/webapp/wordpress/
-RUN rm latest.tar.gz
-# for auto-install of wordpress with wp-cli
-RUN wget https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
-RUN chmod +x wp-cli.phar & mv wp-cli.phar /usr/bin/wp-cli
 
-# copying wordpress config file + rights
-COPY wp-config.php /usr/share/webapp/wordpress/wp-config.php
-RUN chmod 755 /usr/share/webapp/wordpress/wp-config.php
-# replace default nginx conf with ours
-RUN rm /etc/nginx/conf.d/default.conf
-COPY my_nginx.conf /etc/nginx/conf.d/my_nginx.conf
+COPY srcs/telegraf.conf /etc/telegraf/telegraf.conf
+COPY ./srcs/default /etc/nginx/conf.d/default.conf
+COPY ./srcs/default /etc/nginx/nginx.conf
+COPY ./srcs/wp-config.php /usr/share/webapps/wordpress/wp-config.php
+COPY ./srcs/wp.sh    ./wp.sh
+COPY ./srcs/alive.sh /alive.sh
+RUN chmod +x ./wp.sh /alive.sh
 
-# config file for php-fpm
-RUN rm /etc/php7/php-fpm.d/www.conf
-COPY www.conf /etc/php7/php-fpm.d/www.conf
+EXPOSE 5050
 
-# needed to launch nginx
-RUN mkdir -p /run/nginx
-# for launching php-fpm
-RUN mkdir -p /run/php
-
-# copying script for infinite loop to prevent exit
-COPY script.sh /home/script/script.sh
-# add 2 users to wordpress
-COPY create_user_wp.sql /home/script/create_user_wp.sql
-
-# giving rights for execution
-RUN chmod 777 /home/script/script.sh
-
-# container will start on this script
-ENTRYPOINT /home/script/script.sh
+CMD sh wp.sh

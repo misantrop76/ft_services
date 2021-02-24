@@ -1,57 +1,114 @@
-# !bin/bash
+#!/bin/bash
 
-minikube delete
-minikube start
+function build_spec() 
+{
+	printf "\e[39mSTART BUILDING \e[5;92m${1}\e[0m\r"
+	start=`date +%s`
+	docker build srcs/$1/. -t $1-image >> last.log
+	kubectl apply -f srcs/$1/yaml/. >> last.log
+	end=`date +%s`
+	runtime=$((end-start))
+	printf "\e[K\e[92m ${1} DONE (in ${runtime}s)!\e[0m\n"
+}
 
-printf "\e[0;32m[sleeping 3 sec for waiting end of configuration of minikube]\e[0m\n"
-sleep 3
+function build_services()
+{
+	build_spec influxdb
+	build_spec mysql
+	build_spec nginx
+	build_spec phpmyadmin
+	printf "\e[36mPlease wait 10 sec...\n"
+	sleep 10
+	build_spec wordpress
+	build_spec ftps
+	build_spec grafana
+}
 
-# linking our docker client to minikube environnement
-eval $(minikube docker-env)
+function metallinstall()
+{
+	printf "\e[39m START BUILDING \e[5;92mmetallb\e[0m\r"
+	start=`date +%s`
+	kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.9.5/manifests/namespace.yaml >> last.log
+	kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.9.5/manifests/metallb.yaml >> last.log
+	kubectl create secret generic -n metallb-system memberlist --from-literal=secretkey="$(openssl rand -base64 128)" >> last.log
+	kubectl apply -f srcs/metallb/. >> last.log
+	end=`date +%s`
+	runtime=$((end-start))
+	printf "\e[K\e[92m metallb DONE (in ${runtime}s)!\e[0m\n"
+}
 
-# so telegraf can collect datas from the cluster
-minikube addons enable metrics-server
+function sedding()
+{
+	sed -e "s/GLOB_IP/$GLOBIP/g" srcs/templates/wp.sh > srcs/wordpress/srcs/wp.sh
+	sed -e "s/IP_S/$GLOBIP/g;s/IP_E/$GLOBIP/g" srcs/templates/metallb.yaml > srcs/metallb/metallb.yaml
+	sed -e "s/GLOB_IP/$GLOBIP/g" srcs/templates/Dockerfile_ftps > srcs/ftps/Dockerfile
+}
 
-# enabling and configuring metallb
-kubectl apply -f srcs/metallb/metallb.yaml
-kubectl apply -f srcs/metallb/metallb-configmap.yaml
-printf "\e[0;32m[metallb configured]\e[0m\n\n"
+function check_brew()
+{
+	BREW_INSTALLED=$(brew -v | grep "Homebrew" | wc -l | sed s/" "//g)
+	if [ "$BREW_INSTALLED" != "3" ]; then
+		mkdir $HOME/.brew && curl -fsSL https://github.com/Homebrew/brew/tarball/master | tar xz --strip 1 -C $HOME/.brew
+		mkdir -p /tmp/.$(whoami)-brew-locks
+		mkdir -p $HOME/.brew/var/homebrew
+		ln -s /tmp/.$(whoami)-brew-locks $HOME/.brew/var/homebrew/locks
+		export PATH="$HOME/.brew/bin:$PATH"
+		brew update && brew upgrade
+	else
+		printf "\e[92m Brew already installed !\n"
+	fi
+	MININSTALLED=$(minikube version | grep "commit:" | wc -l | sed s/" "//g)
+	if [ "$MININSTALLED" != "1" ]; then
+		brew install minikube
+	else
+		printf "\e[92m Minikube already installed !\n"
+	fi
+}
 
-# building all the images
-docker build -t wordpress_img --network host srcs/wordpress/.
-printf "\e[0;32m[wordpress image built]\e[0m\n\n"
-docker build -t nginx_img srcs/nginx/.
-printf "\e[0;32m[nginx image built]\e[0m\n\n"
-docker build -t phpmyadmin_img srcs/phpmyadmin/.
-printf "\e[0;32m[phpmyadmin image built]\e[0m\n\n"
-docker build -t mysql_img srcs/mysql/.
-printf "\e[0;32m[mysql image built]\e[0m\n\n"
-docker build -t influxdb_img srcs/influxdb/.
-printf "\e[0;32m[influxdb image built]\e[0m\n\n"
-docker build -t grafana_img srcs/grafana/.
-printf "\e[0;32m[grafana image built]\e[0m\n\n"
-docker build -t telegraf_img srcs/telegraf/.
-printf "\e[0;32m[telegraf image built]\e[0m\n\n"
-docker build -t ftps_img srcs/ftps/.
-printf "\e[0;32m[ftps image built]\e[0m\n\n"
+function start()
+{
+	check_brew
+	rm -f last.log
+	printf "\e[91m DELETING minikube\r"
+	minikube delete > last.log
+	printf "\e[K\e[91m minikube deleted !\n"
+	printf "\e[39m STARTING \e[92mminikube\r"
+	minikube start --driver=virtualbox >> last.log
+	printf "\e[K\e[92m minikube started !\n"
+	export GLOBIP=$(minikube ip)
+	eval $(minikube docker-env)
+	sedding
+	metallinstall
+	build_services
+	minikube dashboard
 
-# creating deployment / services / persistent volume claim
-kubectl apply -f srcs/telegraf/admin-pod.yaml
-printf "\e[0;32m[beginning creation of services / deployments / persistent volume claim]\e[0m\n"
-kubectl apply -f srcs/mysql/mysql.yaml
-kubectl apply -f srcs/influxdb/influxdb.yaml
-# need to sleep 15 sec for waiting end of config of mysql so wordpress can autoinstall automatically
-printf "\e[0;32m[sleeping 15 sec for waiting end of configuration of mysql]\e[0m\n"
-sleep 15
-kubectl apply -f srcs/phpmyadmin/phpmyadmin.yaml
-kubectl apply -f srcs/telegraf/telegraf.yaml
-kubectl apply -f srcs/grafana/grafana.yaml
-kubectl apply -f srcs/wordpress/wordpress.yaml
-kubectl apply -f srcs/nginx/nginx.yaml
-kubectl apply -f srcs/ftps/ftps.yaml
-printf "\e[0;32m[all services / deployments / persistent volume claim created]\e[0m\n\n"
+}
 
-# enabling dashboard
-minikube addons enable dashboard
-kubectl apply -f srcs/metallb/dashboard-service.yaml
-printf "\e[0;32m[dashboard enabled]\e[0m\n"
+function clear()
+{
+	check_brew
+	printf "\e[91m"
+	kubectl delete service --all
+	kubectl delete pods --all
+	kubectl delete deployment --all
+	rm -f last.log
+	printf "logs \"last.log\" deleted\n"
+	printf "\e[0m"
+	minikube delete
+}
+
+if [ $# -eq 0 ]; then
+	start
+elif [ $# -eq 1 ]; then
+	if [ "$1" == "start" ]; then
+		start
+	elif [ "$1" == "clear" ]; then
+		clear
+	elif [ "$1" == "dep" ]; then
+		check_brew
+	else
+		echo "Wrong arg"
+	fi
+else
+	echo "Too much args"
+fi

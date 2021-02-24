@@ -1,27 +1,25 @@
-FROM alpine:latest
+FROM alpine:3.12
 
-# install nginx and openssl for https connexion
-RUN apk update && apk add nginx openssl vim openssh
+RUN apk -U upgrade \
+&& apk add --no-cache \
+wget \
+nginx \
+openssl \
+openssh \
+; apk add telegraf --repository http://dl-3.alpinelinux.org/alpine/edge/community/ --allow-untrusted --no-cache \
+&& adduser -D -g 'www' www \
+&& mkdir /www \
+&& chown -R www:www /var/lib/nginx \
+&& chown -R www:www /www \
+&& ssh-keygen -A \
+&& openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /etc/ssl/private/nginx-selfsigned.key -out /etc/ssl/certs/nginx-selfsigned.crt -subj "/C=FR/ST=Lyon/L=Lyon/O=thjacque/OU=42/CN=42.fr"
 
-# needed to launch nginx
-RUN mkdir -p /run/nginx
+RUN rm /etc/nginx/nginx.conf
+COPY ./srcs/nginx.conf /etc/nginx/nginx.conf
+COPY srcs/telegraf.conf /etc/telegraf/telegraf.conf
 
-RUN mkdir /usr/share/webapp
-RUN mv /var/lib/nginx/html/index.html /usr/share/webapp/index.html
+EXPOSE 80 443 22
 
-# replace default nginx conf with ours
-RUN rm /etc/nginx/conf.d/default.conf
-COPY my_nginx.conf /etc/nginx/conf.d/my_nginx.conf
+STOPSIGNAL SIGTERM
 
-# SSL config
-RUN mkdir /etc/nginx/ssl
-COPY nginx.crt /etc/nginx/ssl/nginx.crt
-COPY nginx.key /etc/nginx/ssl/nginx.key
-
-# copying script for starting nginx and infinite loop to prevent exit
-COPY script.sh /home/script/script.sh
-# giving rights for execution
-RUN chmod 777 /home/script/script.sh
-
-# container will start on this script
-ENTRYPOINT /home/script/script.sh
+CMD (telegraf conf &) && /usr/sbin/sshd && nginx -g 'pid /tmp/nginx.pid; daemon off;'

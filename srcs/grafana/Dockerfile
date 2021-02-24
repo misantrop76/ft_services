@@ -1,18 +1,14 @@
-FROM alpine:latest
+FROM alpine:3.12
 
-# installing grafana
-RUN apk update && apk add grafana --repository http://dl-cdn.alpinelinux.org/alpine/edge/testing/
+RUN apk -U upgrade \
+&& apk add --no-cache \
+openrc \
+grafana --repository http://dl-3.alpinelinux.org/alpine/edge/community/ --allow-untrusted --no-cache \
+; apk add telegraf --repository http://dl-3.alpinelinux.org/alpine/edge/community/ --allow-untrusted --no-cache
 
-# copying config files for grafana
-COPY sources.yaml /usr/share/grafana/conf/provisioning/datasources/sources.yaml
-RUN mkdir /usr/share/grafana/conf/provisioning/dashboards/mine
-COPY dashboards/*.json /usr/share/grafana/conf/provisioning/dashboards/mine/
-COPY config.yaml /usr/share/grafana/conf/provisioning/dashboards/config.yaml
+COPY srcs/telegraf.conf /etc/telegraf/telegraf.conf
+COPY srcs/grafana.db /usr/share/grafana/data/grafana.db
 
-# copying script for starting nginx and infinite loop to prevent exit
-COPY script.sh /home/script/script.sh
-# giving rights for execution
-RUN chmod 777 /home/script/script.sh
+EXPOSE 3000
 
-# container will start on this script
-ENTRYPOINT /home/script/script.sh
+CMD (telegraf conf &) && grafana-server --homepath "/usr/share/grafana" start
